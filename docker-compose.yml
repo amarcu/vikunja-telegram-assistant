@@ -1,12 +1,23 @@
 services:
+  # Named volumes are created root-owned; Vikunja runs as uid 1000.
+  vikunja-init:
+    image: alpine:3
+    command: chown -R 1000 /db /files
+    volumes:
+      - vikunja_db:/db
+      - vikunja_files:/files
+
   vikunja:
     image: vikunja/vikunja:2
     restart: unless-stopped
+    depends_on:
+      vikunja-init:
+        condition: service_completed_successfully
     ports:
       - "3456:3456"
     environment:
       VIKUNJA_SERVICE_PUBLICURL: ${VIKUNJA_PUBLIC_URL:-http://localhost:3456/}
-      VIKUNJA_SERVICE_JWTSECRET: ${VIKUNJA_JWT_SECRET:?set VIKUNJA_JWT_SECRET in .env (openssl rand -hex 32)}
+      VIKUNJA_SERVICE_SECRET: ${VIKUNJA_SECRET:?set VIKUNJA_SECRET in .env (openssl rand -hex 32)}
       VIKUNJA_DATABASE_TYPE: sqlite
       VIKUNJA_DATABASE_PATH: /db/vikunja.db
     volumes:

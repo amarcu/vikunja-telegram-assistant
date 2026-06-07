@@ -44,7 +44,7 @@ cp .env.example .env
 
 1. **Create the bot** — message [@BotFather](https://t.me/BotFather), `/newbot`,
    copy the token into `TELEGRAM_BOT_TOKEN`.
-2. **Generate a secret** — `openssl rand -hex 32` into `VIKUNJA_JWT_SECRET`.
+2. **Generate a secret** — `openssl rand -hex 32` into `VIKUNJA_SECRET`.
 3. **Start Vikunja** — `docker compose up -d vikunja`, open
    <http://localhost:3456>, register your account and create a project.
 4. **Create an API token** — Vikunja → Settings → API Tokens, with permissions
@@ -108,7 +108,7 @@ exposed to the internet.
 | `VIKUNJA_URL` | `http://vikunja:3456` | Where the bot reaches the Vikunja API |
 | `VIKUNJA_API_TOKEN` | — | Vikunja → Settings → API Tokens |
 | `VIKUNJA_PUBLIC_URL` | `http://localhost:3456/` | Web-UI URL used in links/buttons |
-| `VIKUNJA_JWT_SECRET` | — | Session secret for Vikunja itself |
+| `VIKUNJA_SECRET` | — | Session secret for Vikunja itself |
 | `DEFAULT_PROJECT_ID` | `1` | Project for tasks without `#project` |
 | `TIMEZONE` | `Europe/Bucharest` | IANA TZ for parsing & display |
 | `REMINDER_POLL_SECONDS` | `60` | Reminder check interval |
