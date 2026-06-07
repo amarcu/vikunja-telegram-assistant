@@ -17,19 +17,26 @@ import config
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You extract task data from a chat message. Reply with ONLY a JSON object:
-{
-  "title": "concise task title, imperative, no date words",
-  "due_date": "ISO 8601 with timezone offset, or null if no date/time implied",
-  "priority": 0,
-  "project": "name of the best-matching project from the list, or null"
-}
-priority: 0 unless urgency is expressed (1 low ... 5 do-now).
-The message may be in any language; keep the title in that language and
-resolve relative dates ("mañana", "mâine", "tomorrow") against the current
-local time below.
+You extract one task from a chat message. Reply with ONLY a JSON object, no prose:
+{"title": "...", "due_date": "... or null", "priority": 0, "project": "... or null"}
+
+Rules:
+- title: the task in the SAME language as the message — NEVER translate — with
+  date/time/urgency words removed.
+- due_date: ISO 8601 with timezone offset, resolved against the current local
+  time given below; null if the message implies no date. A weekday name means
+  the NEXT occurrence of that weekday. A bare hour like "ora 10" or "10am"
+  means that time of day.
+- priority: 0 unless urgency is expressed (1 low ... 5 do-now).
+- project: best-matching name from the project list, else null.
+
+Examples — these assume now = Monday 2026-06-08T09:00+03:00:
+"trimite raportul joi la 18, urgent" -> {"title": "trimite raportul", "due_date": "2026-06-11T18:00:00+03:00", "priority": 4, "project": null}
+"buy milk tomorrow 6pm" -> {"title": "buy milk", "due_date": "2026-06-09T18:00:00+03:00", "priority": 0, "project": "Personal"}
+"call mom sometime next week" -> {"title": "call mom", "due_date": "2026-06-15T09:00:00+03:00", "priority": 0, "project": null}
+
 Current local time: {now}. Timezone: {tz}.
-Existing projects: {projects}.
+Projects: {projects}.
 """
 
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
@@ -37,7 +44,8 @@ THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
     """Return {title, due_date: datetime|None, priority, project} or None on failure."""
-    system = SYSTEM_PROMPT.replace("{now}", datetime.now(config.TIMEZONE).isoformat())
+    now = datetime.now(config.TIMEZONE)
+    system = SYSTEM_PROMPT.replace("{now}", f"{now:%A} {now.isoformat(timespec='minutes')}")
     system = system.replace("{tz}", config.TIMEZONE_NAME)
     system = system.replace("{projects}", ", ".join(project_names) or "(none)")
 
@@ -46,7 +54,8 @@ async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
         headers["Authorization"] = f"Bearer {config.LLM_API_KEY}"
 
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        # Generous timeout: a local model may cold-load into VRAM on first call.
+        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=10)) as client:
             response = await client.post(
                 f"{config.LLM_BASE_URL}/chat/completions",
                 headers=headers,
