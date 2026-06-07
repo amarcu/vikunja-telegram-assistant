@@ -1,0 +1,33 @@
+services:
+  vikunja:
+    image: vikunja/vikunja:2
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    environment:
+      VIKUNJA_SERVICE_PUBLICURL: ${VIKUNJA_PUBLIC_URL:-http://localhost:3456/}
+      VIKUNJA_SERVICE_JWTSECRET: ${VIKUNJA_JWT_SECRET:?set VIKUNJA_JWT_SECRET in .env (openssl rand -hex 32)}
+      VIKUNJA_DATABASE_TYPE: sqlite
+      VIKUNJA_DATABASE_PATH: /db/vikunja.db
+    volumes:
+      - vikunja_db:/db
+      - vikunja_files:/app/vikunja/files
+    healthcheck:
+      test: ["CMD", "/app/vikunja/vikunja", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    depends_on:
+      - vikunja
+    env_file: .env
+    volumes:
+      - bot_data:/data
+
+volumes:
+  vikunja_db:
+  vikunja_files:
+  bot_data:
