@@ -6,6 +6,7 @@ Supported syntax (all optional, any order):
 
 Dates are found with dateparser's search_dates, so most natural English
 works: "tomorrow 6pm", "friday", "in 2 hours", "june 21", "next week".
+Other languages too — set DATEPARSER_LANGUAGES (e.g. "en,ro").
 """
 
 import re
@@ -32,7 +33,7 @@ class ParsedTask:
     matched_date_text: str | None = None
 
 
-def parse_message(text: str, timezone_name: str) -> ParsedTask:
+def parse_message(text: str, timezone_name: str, languages: list[str] | None = None) -> ParsedTask:
     result = ParsedTask(title=text.strip())
     working = text.strip()
 
@@ -44,27 +45,30 @@ def parse_message(text: str, timezone_name: str) -> ParsedTask:
         result.project_hint = match.group(1).lower()
         working = PROJECT_RE.sub(" ", working, count=1)
 
-    found = search_dates(
-        working,
-        languages=["en"],
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "TIMEZONE": timezone_name,
-            "RETURN_AS_TIMEZONE_AWARE": True,
-        },
-    )
-    if found:
-        # Prefer the longest plausible match (e.g. "tomorrow 6pm" over "6").
-        candidates = [
+    # dateparser assumes ONE language per text, so query each language
+    # separately and keep the longest plausible match across all of them
+    # (e.g. ro:"mâine la 10:00" beats en:"10:00").
+    candidates = []
+    for language in languages or ["en"]:
+        found = search_dates(
+            working,
+            languages=[language],
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "TIMEZONE": timezone_name,
+                "RETURN_AS_TIMEZONE_AWARE": True,
+            },
+        )
+        candidates += [
             (matched, when)
-            for matched, when in found
+            for matched, when in found or []
             if len(matched) > 2 and _PLAUSIBLE_DATE_RE.search(matched)
         ]
-        if candidates:
-            matched_text, when = max(candidates, key=lambda c: len(c[0]))
-            result.due_date = when
-            result.matched_date_text = matched_text
-            working = working.replace(matched_text, " ", 1)
+    if candidates:
+        matched_text, when = max(candidates, key=lambda c: len(c[0]))
+        result.due_date = when
+        result.matched_date_text = matched_text
+        working = working.replace(matched_text, " ", 1)
 
     title = re.sub(r"\s+", " ", working).strip(" ,.-—")
     result.title = title or text.strip()

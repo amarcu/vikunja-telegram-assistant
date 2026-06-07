@@ -7,6 +7,7 @@ Falls back to parsing.py on any failure — the bot never depends on the LLM.
 
 import json
 import logging
+import re
 from datetime import datetime
 
 import httpx
@@ -24,9 +25,14 @@ You extract task data from a chat message. Reply with ONLY a JSON object:
   "project": "name of the best-matching project from the list, or null"
 }
 priority: 0 unless urgency is expressed (1 low ... 5 do-now).
+The message may be in any language; keep the title in that language and
+resolve relative dates ("mañana", "mâine", "tomorrow") against the current
+local time below.
 Current local time: {now}. Timezone: {tz}.
 Existing projects: {projects}.
 """
+
+THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
@@ -59,7 +65,8 @@ async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
         logger.warning("LLM call failed, falling back to date parser: %s", exc)
         return None
 
-    # Tolerate models that wrap JSON in code fences.
+    # Tolerate reasoning models (<think> blocks) and code fences.
+    content = THINK_RE.sub("", content)
     content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
     try:
         data = json.loads(content)

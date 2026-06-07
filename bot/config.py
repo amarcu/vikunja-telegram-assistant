@@ -28,6 +28,11 @@ TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 
 REMINDER_POLL_SECONDS = int(os.environ.get("REMINDER_POLL_SECONDS", "60"))
 
+# Languages dateparser should expect, comma-separated (e.g. "en,ro").
+DATEPARSER_LANGUAGES = [
+    lang for lang in os.environ.get("DATEPARSER_LANGUAGES", "en").replace(" ", "").split(",") if lang
+]
+
 # Optional OpenAI-compatible LLM endpoint for free-form message parsing.
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "").strip().rstrip("/")
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "").strip()

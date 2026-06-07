@@ -87,7 +87,7 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if config.LLM_ENABLED:
         parsed = await llm.parse_with_llm(text, [p["title"] for p in projects])
     if parsed is None:
-        result = parsing.parse_message(text, config.TIMEZONE_NAME)
+        result = parsing.parse_message(text, config.TIMEZONE_NAME, config.DATEPARSER_LANGUAGES)
         parsed = {
             "title": result.title,
             "due_date": result.due_date,

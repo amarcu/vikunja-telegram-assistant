@@ -37,6 +37,10 @@ services:
     env_file: .env
     volumes:
       - bot_data:/data
+    # Lets the container reach services on the host, e.g. Ollama at
+    # http://host.docker.internal:11434/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   vikunja_db:

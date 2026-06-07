@@ -55,3 +55,29 @@ def test_no_date_keeps_full_title():
     result = parse_message("refactor the parser module", TZ)
     assert result.title == "refactor the parser module"
     assert result.due_date is None
+
+
+def test_romanian_date_and_time():
+    result = parse_message("deploy lista de todo mâine la 10:00", TZ, languages=["en", "ro"])
+    assert result.due_date is not None
+    assert result.due_date.hour == 10
+    assert result.title == "deploy lista de todo"
+
+
+def test_mixed_language_no_catastrophe():
+    # Regression: "maine 10am" en-parsed "10am" alone as OCTOBER. The
+    # longest-match-across-languages rule must pick ro's "maine 10am"
+    # (right day; exact time is the LLM's job for mixed-language input).
+    from datetime import datetime, timedelta
+
+    result = parse_message("deploy lista de todo maine 10am", TZ, languages=["en", "ro"])
+    assert result.due_date is not None
+    tomorrow = (datetime.now(result.due_date.tzinfo) + timedelta(days=1)).date()
+    assert result.due_date.date() == tomorrow
+    assert "maine" not in result.title.lower()
+
+
+def test_english_unaffected_by_extra_languages():
+    result = parse_message("buy milk tomorrow 6pm", TZ, languages=["en", "ro"])
+    assert result.title == "buy milk"
+    assert result.due_date is not None and result.due_date.hour == 18
