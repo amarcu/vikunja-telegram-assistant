@@ -82,6 +82,7 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /add buy milk tomorrow 6pm #personal !3")
         return
 
+    logger.info("Capture from %s: %r", update.effective_user.id, text[:100])
     projects = await get_projects(context)
     parsed_tasks = None
     if config.LLM_ENABLED:
@@ -117,6 +118,7 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("🤔 I couldn't find a task in that message.")
         return
 
+    logger.info("Created %d task(s) for %s", len(created), update.effective_user.id)
     if len(created) == 1:
         await _confirm_single(update, created[0], projects)
     else:
@@ -167,8 +169,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 Just type a todo and I'll put it on your board:\n\n"
         "  <i>buy milk tomorrow 6pm #personal !3</i>\n\n"
-        "I'll remind you here when things are due. /help for everything else.",
+        "Send a bulleted list and I'll add each line as its own task.\n"
+        "I'll remind you here when things are due.\n\n"
+        f"🔗 Your board: {config.VIKUNJA_PUBLIC_URL}\n"
+        "/help for everything else.",
         parse_mode="HTML",
+        disable_web_page_preview=True,
     )
 
 
@@ -179,13 +185,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Send any text to add a task. Optional bits, any order:\n"
         "  • a date: <i>tomorrow 6pm, friday, in 2 hours</i>\n"
         "  • <code>#project</code> — first matching project name\n"
-        "  • <code>!1</code>–<code>!5</code> — priority\n\n"
+        "  • <code>!1</code>–<code>!5</code> — priority\n"
+        "A bulleted/numbered list adds one task per line (a header like "
+        "<i>“…until 6pm:”</i> applies to all).\n\n"
         "Commands:\n"
         "  /list — open tasks\n"
         "  /today — due or overdue today\n"
         "  /done &lt;id&gt; — complete a task\n"
         "  /projects — your projects\n"
-        "  /board — link to the web UI",
+        "  /board — open the web UI (also /web, /open, /fe)",
         parse_mode="HTML",
     )
 
@@ -264,7 +272,14 @@ async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_board(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not authorized(update):
         return
-    await update.message.reply_text(f"🔗 {config.VIKUNJA_PUBLIC_URL}")
+    buttons = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔗 Open board", url=config.VIKUNJA_PUBLIC_URL)]]
+    )
+    await update.message.reply_text(
+        f"🔗 Your board:\n{config.VIKUNJA_PUBLIC_URL}",
+        reply_markup=buttons,
+        disable_web_page_preview=True,
+    )
 
 
 # ── Inline buttons ───────────────────────────────────────────────────────────
@@ -309,6 +324,18 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 # ── Wiring ───────────────────────────────────────────────────────────────────
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Never fail silently: log the exception and tell the user something broke."""
+    logger.error("Unhandled handler error", exc_info=context.error)
+    if isinstance(update, Update) and update.effective_message:
+        try:
+            await update.effective_message.reply_text(
+                "😞 Something went wrong handling that — it may not have been saved. Try again."
+            )
+        except Exception:  # the reply itself can fail (e.g. network) — swallow it
+            pass
+
+
 async def post_init(application: Application) -> None:
     application.bot_data["vikunja"] = vikunja.VikunjaClient(
         config.VIKUNJA_URL, config.VIKUNJA_API_TOKEN
@@ -341,9 +368,10 @@ def main() -> None:
     application.add_handler(CommandHandler("today", cmd_today))
     application.add_handler(CommandHandler("done", cmd_done))
     application.add_handler(CommandHandler("projects", cmd_projects))
-    application.add_handler(CommandHandler("board", cmd_board))
+    application.add_handler(CommandHandler(["board", "web", "open", "link", "fe"], cmd_board))
     application.add_handler(CallbackQueryHandler(on_button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, capture))
+    application.add_error_handler(on_error)
 
     application.job_queue.run_repeating(
         reminders.poll_reminders, interval=config.REMINDER_POLL_SECONDS, first=10
