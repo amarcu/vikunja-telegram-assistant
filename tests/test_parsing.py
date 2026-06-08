@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "bot"))
 
-from parsing import parse_message
+from parsing import parse_message, parse_messages
 
 TZ = "Europe/Bucharest"
 
@@ -81,3 +81,33 @@ def test_english_unaffected_by_extra_languages():
     result = parse_message("buy milk tomorrow 6pm", TZ, languages=["en", "ro"])
     assert result.title == "buy milk"
     assert result.due_date is not None and result.due_date.hour == 18
+
+
+def test_single_message_is_one_task():
+    results = parse_messages("buy milk tomorrow 6pm", TZ)
+    assert len(results) == 1
+    assert results[0].title == "buy milk"
+
+
+def test_bulleted_list_splits_into_one_task_each():
+    # Regression: this whole message used to become a SINGLE task.
+    text = (
+        "Add these tasks for today, to-do until 6PM:\n"
+        "• Update goats metadata\n"
+        "• Update AKCB mint destination page\n"
+        "• Update AKCB mml model"
+    )
+    results = parse_messages(text, TZ, languages=["en", "ro"])
+    assert len(results) == 3
+    titles = [r.title for r in results]
+    assert "Update goats metadata" in titles
+    assert "Update AKCB mint destination page" in titles
+    assert "Update AKCB mml model" in titles
+    # the header's date is shared onto every item
+    assert all(r.due_date is not None for r in results)
+
+
+def test_numbered_list_splits():
+    text = "groceries:\n1. milk\n2. eggs\n3) bread"
+    results = parse_messages(text, TZ)
+    assert [r.title for r in results] == ["milk", "eggs", "bread"]

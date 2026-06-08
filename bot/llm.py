@@ -17,23 +17,31 @@ import config
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
-You extract one task from a chat message. Reply with ONLY a JSON object, no prose:
-{"title": "...", "due_date": "... or null", "priority": 0, "project": "... or null"}
+You extract one or MORE tasks from a chat message. Reply with ONLY a JSON array
+of task objects, no prose:
+[{"title": "...", "due_date": "... or null", "priority": 0, "project": "... or null"}]
 
 Rules:
+- Usually a message is ONE task -> return a single-element array.
+- If the message is a LIST — bullet points (•, -, *), "1." numbering, or several
+  short lines that are each a distinct action — return ONE object per list item.
+- A shared header applies to EVERY item below it: a date/time, priority, or
+  project stated once (e.g. "tasks for today until 6pm:") attaches to all items.
 - title: the task in the SAME language as the message — NEVER translate — with
-  date/time/urgency words removed.
+  date/time/urgency words and list markers removed.
 - due_date: ISO 8601 with timezone offset, resolved against the current local
-  time given below; null if the message implies no date. A weekday name means
-  the NEXT occurrence of that weekday. A bare hour like "ora 10" or "10am"
-  means that time of day.
+  time given below; null if no date is implied. "until 6pm" / "by 6pm" /
+  "to-do until 18" / "ora 18" means TODAY at that time. A weekday name means the
+  NEXT occurrence of that weekday. A bare hour like "ora 10" or "10am" means that
+  time of day.
 - priority: 0 unless urgency is expressed (1 low ... 5 do-now).
 - project: best-matching name from the project list, else null.
 
 Examples — these assume now = Monday 2026-06-08T09:00+03:00:
-"trimite raportul joi la 18, urgent" -> {"title": "trimite raportul", "due_date": "2026-06-11T18:00:00+03:00", "priority": 4, "project": null}
-"buy milk tomorrow 6pm" -> {"title": "buy milk", "due_date": "2026-06-09T18:00:00+03:00", "priority": 0, "project": "Personal"}
-"call mom sometime next week" -> {"title": "call mom", "due_date": "2026-06-15T09:00:00+03:00", "priority": 0, "project": null}
+"trimite raportul joi la 18, urgent" -> [{"title": "trimite raportul", "due_date": "2026-06-11T18:00:00+03:00", "priority": 4, "project": null}]
+"buy milk tomorrow 6pm" -> [{"title": "buy milk", "due_date": "2026-06-09T18:00:00+03:00", "priority": 0, "project": "Personal"}]
+"call mom sometime next week" -> [{"title": "call mom", "due_date": "2026-06-15T09:00:00+03:00", "priority": 0, "project": null}]
+"Add these tasks for today, to-do until 6PM:\\n• Update goats metadata\\n• Update AKCB mint page\\n• Update AKCB model" -> [{"title": "Update goats metadata", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}, {"title": "Update AKCB mint page", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}, {"title": "Update AKCB model", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}]
 
 Current local time: {now}. Timezone: {tz}.
 Projects: {projects}.
@@ -42,8 +50,12 @@ Projects: {projects}.
 THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
-async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
-    """Return {title, due_date: datetime|None, priority, project} or None on failure."""
+async def parse_with_llm(text: str, project_names: list[str]) -> list[dict] | None:
+    """Return a list of {title, due_date: datetime|None, priority, project}.
+
+    One element for a normal message, several for a bulleted/multi-line list.
+    Returns None on any failure so the caller falls back to the date parser.
+    """
     now = datetime.now(config.TIMEZONE)
     system = SYSTEM_PROMPT.replace("{now}", f"{now:%A} {now.isoformat(timespec='minutes')}")
     system = system.replace("{tz}", config.TIMEZONE_NAME)
@@ -79,12 +91,25 @@ async def parse_with_llm(text: str, project_names: list[str]) -> dict | None:
     content = content.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
     try:
         data = json.loads(content)
-        due = data.get("due_date")
-        data["due_date"] = datetime.fromisoformat(due) if due else None
-        data["title"] = (data.get("title") or "").strip()
-        if not data["title"]:
-            return None
-        return data
+        # Accept either a single object (legacy) or an array of tasks.
+        items = data if isinstance(data, list) else [data]
+        tasks = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = (item.get("title") or "").strip()
+            if not title:
+                continue
+            due = item.get("due_date")
+            tasks.append(
+                {
+                    "title": title,
+                    "due_date": datetime.fromisoformat(due) if due else None,
+                    "priority": item.get("priority") or None,
+                    "project": item.get("project"),
+                }
+            )
+        return tasks or None
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
         logger.warning("LLM returned unparseable JSON, falling back: %s", exc)
         return None

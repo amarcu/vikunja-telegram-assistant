@@ -1,3 +1,11 @@
+# Cap container logs so they can't grow unbounded — matters on SD-card hosts
+# (e.g. a Raspberry Pi) where continuous writes are the main wear source.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   # Named volumes are created root-owned; Vikunja runs as uid 1000.
   vikunja-init:
@@ -10,6 +18,7 @@ services:
   vikunja:
     image: vikunja/vikunja:2
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       vikunja-init:
         condition: service_completed_successfully
@@ -32,6 +41,7 @@ services:
   bot:
     build: ./bot
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       - vikunja
     env_file: .env

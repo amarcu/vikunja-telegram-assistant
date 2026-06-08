@@ -83,34 +83,52 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     projects = await get_projects(context)
-    parsed = None
+    parsed_tasks = None
     if config.LLM_ENABLED:
-        parsed = await llm.parse_with_llm(text, [p["title"] for p in projects])
-    if parsed is None:
-        result = parsing.parse_message(text, config.TIMEZONE_NAME, config.DATEPARSER_LANGUAGES)
-        parsed = {
-            "title": result.title,
-            "due_date": result.due_date,
-            "priority": result.priority,
-            "project": result.project_hint,
-        }
+        parsed_tasks = await llm.parse_with_llm(text, [p["title"] for p in projects])
+    if parsed_tasks is None:  # LLM off or failed — fall back to the date parser
+        parsed_tasks = [
+            {
+                "title": r.title,
+                "due_date": r.due_date,
+                "priority": r.priority,
+                "project": r.project_hint,
+            }
+            for r in parsing.parse_messages(text, config.TIMEZONE_NAME, config.DATEPARSER_LANGUAGES)
+        ]
 
-    project_id = resolve_project(parsed.get("project"), projects)
-    try:
-        task = await context.application.bot_data["vikunja"].create_task(
-            project_id,
-            parsed["title"],
-            due_date=parsed.get("due_date"),
-            priority=parsed.get("priority") or None,
-        )
-    except vikunja.VikunjaError as exc:
-        await update.message.reply_text(f"😞 {exc}")
+    client = context.application.bot_data["vikunja"]
+    created: list[tuple[dict, int]] = []
+    for parsed in parsed_tasks:
+        project_id = resolve_project(parsed.get("project"), projects)
+        try:
+            task = await client.create_task(
+                project_id,
+                parsed["title"],
+                due_date=parsed.get("due_date"),
+                priority=parsed.get("priority") or None,
+            )
+        except vikunja.VikunjaError as exc:
+            await update.message.reply_text(f"😞 {exc}")
+            return
+        created.append((task, project_id))
+
+    if not created:
+        await update.message.reply_text("🤔 I couldn't find a task in that message.")
         return
 
+    if len(created) == 1:
+        await _confirm_single(update, created[0], projects)
+    else:
+        await _confirm_many(update, created)
+
+
+async def _confirm_single(update: Update, created: tuple[dict, int], projects: list[dict]) -> None:
+    task, project_id = created
     project_title = next((p["title"] for p in projects if p["id"] == project_id), "?")
     confirmation = f"✅ Added to <b>{project_title}</b>: {task['title']}"
-    if parsed.get("due_date"):
-        due_local = parsed["due_date"].astimezone(config.TIMEZONE)
+    if vikunja.is_set(task.get("due_date")):
+        due_local = vikunja.parse_date(task["due_date"]).astimezone(config.TIMEZONE)
         confirmation += f"\n📅 {due_local:%a %d %b %H:%M} (you'll get a reminder)"
     buttons = InlineKeyboardMarkup(
         [
@@ -124,6 +142,15 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ]
     )
     await update.message.reply_text(confirmation, parse_mode="HTML", reply_markup=buttons)
+
+
+async def _confirm_many(update: Update, created: list[tuple[dict, int]]) -> None:
+    lines = [format_task_line(task) for task, _ in created]
+    text = f"✅ Added {len(created)} tasks:\n" + "\n".join(lines) + "\n\n/done &lt;id&gt; to complete one"
+    buttons = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🔗 Open board", url=config.VIKUNJA_PUBLIC_URL)]]
+    )
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=buttons)
 
 
 # ── Commands ─────────────────────────────────────────────────────────────────
