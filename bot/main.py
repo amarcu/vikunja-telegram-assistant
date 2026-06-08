@@ -5,7 +5,7 @@ get reminders back in Telegram.
 import logging
 from datetime import datetime, time, timedelta
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -339,6 +339,17 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def post_init(application: Application) -> None:
     application.bot_data["vikunja"] = vikunja.VikunjaClient(
         config.VIKUNJA_URL, config.VIKUNJA_API_TOKEN
+    )
+    # Register the command menu so they show under the "/" button in Telegram.
+    await application.bot.set_my_commands(
+        [
+            BotCommand("list", "Open tasks"),
+            BotCommand("today", "Due or overdue today"),
+            BotCommand("board", "Open the board (web UI)"),
+            BotCommand("projects", "Your projects"),
+            BotCommand("done", "Complete a task by id"),
+            BotCommand("help", "How to use the bot"),
+        ]
     )
     logger.info(
         "Bot up. Vikunja: %s | LLM parsing: %s | poll every %ss",
