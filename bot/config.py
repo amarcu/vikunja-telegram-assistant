@@ -28,6 +28,10 @@ TIMEZONE = ZoneInfo(TIMEZONE_NAME)
 
 REMINDER_POLL_SECONDS = int(os.environ.get("REMINDER_POLL_SECONDS", "60"))
 
+# Time of day (local hour, 0-23) a recurring task fires when no time is given,
+# e.g. "review 100 videos per day" with no clock time -> next 9am.
+DEFAULT_REMINDER_HOUR = int(os.environ.get("DEFAULT_REMINDER_HOUR", "9"))
+
 # Languages dateparser should expect, comma-separated (e.g. "en,ro").
 DATEPARSER_LANGUAGES = [
     lang for lang in os.environ.get("DATEPARSER_LANGUAGES", "en").replace(" ", "").split(",") if lang

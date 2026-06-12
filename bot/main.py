@@ -59,9 +59,29 @@ def format_task_line(task: dict) -> str:
     if vikunja.is_set(task.get("due_date")):
         due = vikunja.parse_date(task["due_date"]).astimezone(config.TIMEZONE)
         line += f" — 📅 {due:%a %d %b %H:%M}"
+    if vikunja.is_recurring(task):
+        line += " 🔁"
     if task.get("priority"):
         line += f" {'❗' * min(task['priority'], 3)}"
     return line
+
+
+def next_occurrence(hour: int) -> datetime:
+    """The next time today/tomorrow that the clock hits `hour` (local)."""
+    now = datetime.now(config.TIMEZONE)
+    candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+    if candidate <= now:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def done_message(task: dict) -> str:
+    """Confirmation after completing a task. Vikunja rolls a recurring task
+    forward (done flips back to false, due_date advances) — say when it's next."""
+    if vikunja.is_recurring(task) and vikunja.is_set(task.get("due_date")):
+        nxt = vikunja.parse_date(task["due_date"]).astimezone(config.TIMEZONE)
+        return f"✅ Done: {task['title']}\n🔁 back on {nxt:%a %d %b %H:%M}"
+    return f"✅ Done: {task['title']}"
 
 
 # ── Capture (plain text and /add) ────────────────────────────────────────────
@@ -94,6 +114,8 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 "due_date": r.due_date,
                 "priority": r.priority,
                 "project": r.project_hint,
+                "repeat_after": r.repeat_after,
+                "repeat_mode": r.repeat_mode,
             }
             for r in parsing.parse_messages(text, config.TIMEZONE_NAME, config.DATEPARSER_LANGUAGES)
         ]
@@ -102,12 +124,20 @@ async def capture(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     created: list[tuple[dict, int]] = []
     for parsed in parsed_tasks:
         project_id = resolve_project(parsed.get("project"), projects)
+        due_date = parsed.get("due_date")
+        # A recurring task needs a due date to roll forward from; if the user
+        # gave a cadence but no time ("100 videos per day"), anchor the first
+        # occurrence to the default reminder hour.
+        if parsed.get("repeat_after") and due_date is None:
+            due_date = next_occurrence(config.DEFAULT_REMINDER_HOUR)
         try:
             task = await client.create_task(
                 project_id,
                 parsed["title"],
-                due_date=parsed.get("due_date"),
+                due_date=due_date,
                 priority=parsed.get("priority") or None,
+                repeat_after=parsed.get("repeat_after"),
+                repeat_mode=parsed.get("repeat_mode") or 0,
             )
         except vikunja.VikunjaError as exc:
             await update.message.reply_text(f"😞 {exc}")
@@ -132,6 +162,11 @@ async def _confirm_single(update: Update, created: tuple[dict, int], projects: l
     if vikunja.is_set(task.get("due_date")):
         due_local = vikunja.parse_date(task["due_date"]).astimezone(config.TIMEZONE)
         confirmation += f"\n📅 {due_local:%a %d %b %H:%M} (you'll get a reminder)"
+    if vikunja.is_recurring(task):
+        confirmation += (
+            f"\n🔁 repeats {vikunja.describe_recurrence(task)} — "
+            "I'll remind you every time, done or not"
+        )
     buttons = InlineKeyboardMarkup(
         [
             [
@@ -184,10 +219,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Send any text to add a task. Optional bits, any order:\n"
         "  • a date: <i>tomorrow 6pm, friday, in 2 hours</i>\n"
+        "  • recurrence: <i>every day, per day, weekly, every 3 days, every monday</i>\n"
         "  • <code>#project</code> — first matching project name\n"
         "  • <code>!1</code>–<code>!5</code> — priority\n"
         "A bulleted/numbered list adds one task per line (a header like "
-        "<i>“…until 6pm:”</i> applies to all).\n\n"
+        "<i>“…until 6pm:”</i> applies to all).\n"
+        "A recurring task 🔁 reminds you every period on schedule — done or not.\n\n"
         "Commands:\n"
         "  /list — open tasks\n"
         "  /today — due or overdue today\n"
@@ -246,7 +283,7 @@ async def cmd_done(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except vikunja.VikunjaError as exc:
         await update.message.reply_text(f"😞 {exc}")
         return
-    await update.message.reply_text(f"✅ Done: {task['title']}")
+    await update.message.reply_text(done_message(task))
 
 
 async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,7 +333,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if action == "done":
             task = await client.mark_done(int(rest))
             await query.answer("Done ✅")
-            await query.edit_message_text(f"✅ Done: {task['title']}")
+            await query.edit_message_text(done_message(task))
         elif action == "undo":
             await client.delete_task(int(rest))
             await query.answer("Removed")

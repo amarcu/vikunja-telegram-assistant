@@ -19,7 +19,8 @@ you can't capture tasks from chat, and reminders don't reach you unless the
 app is open. This bot closes both gaps with one small container:
 
 - **Capture** — send any text, it becomes a task on your board. Natural dates
-  ("tomorrow 6pm", "friday", "in 2 hours"), `#project`, `!1`–`!5` priority.
+  ("tomorrow 6pm", "friday", "in 2 hours"), recurrence ("every day", "per day",
+  "weekly", "every 3 days", "every monday"), `#project`, `!1`–`!5` priority.
 - **Remind** — polls Vikunja and pings you in Telegram when reminders fire or
   tasks go overdue, with inline **Done / Snooze** buttons.
 - **Manage** — `/list`, `/today`, `/done`, `/projects` from chat; the full
@@ -66,6 +67,8 @@ That's it. Send your bot a todo.
 |---|---|
 | `buy milk tomorrow 6pm` | Task in default project, due tomorrow 18:00, reminder set |
 | `ship report friday #work !4` | Task in first project matching "work…", priority 4 |
+| `review 100 videos per day #dance` | Recurring daily reminder at the default hour, fires every day regardless of status |
+| `gym every monday 7am` | Recurring weekly reminder, first fires next Monday 07:00 |
 | `call mom` | Task with no date — sits on the board until done |
 | `/list` | Open tasks with IDs |
 | `/today` | Due-today and overdue tasks |
@@ -75,6 +78,22 @@ That's it. Send your bot a todo.
 
 Reminder messages carry **✅ Done · ⏰ +1h · 🌅 Tomorrow** buttons, so most
 days you never open the app.
+
+### Recurring tasks
+
+Add a cadence and the task repeats: `every day` / `per day` / `daily`,
+`weekly`, `monthly`, `every 3 days`, `every 90 minutes`, or `every monday`.
+
+A recurring reminder is **schedule-driven**: it pings you every period at its
+scheduled time *whether or not the task is marked done* — so a daily habit like
+*"review 100 videos per day"* reaches you every day even if you never tap a
+button. Tapping **✅ Done for now** simply rolls the task to its next slot to
+keep the board tidy; ignoring it doesn't stop tomorrow's reminder. If you give a
+cadence but no time, the reminder fires at `DEFAULT_REMINDER_HOUR` (09:00 by
+default).
+
+Under the hood this maps to Vikunja's native `repeat_after`/`repeat_mode`, so
+the task also shows as recurring in Vikunja's own apps.
 
 ## Optional: LLM parsing
 
@@ -112,6 +131,7 @@ exposed to the internet.
 | `DEFAULT_PROJECT_ID` | `1` | Project for tasks without `#project` |
 | `TIMEZONE` | `Europe/Bucharest` | IANA TZ for parsing & display |
 | `REMINDER_POLL_SECONDS` | `60` | Reminder check interval |
+| `DEFAULT_REMINDER_HOUR` | `9` | Local hour a recurring task fires when no time is given |
 | `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` | unset | Optional AI parsing |
 
 ## Development

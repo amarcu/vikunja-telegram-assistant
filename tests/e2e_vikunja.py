@@ -88,6 +88,22 @@ async def main() -> None:
         except vikunja.VikunjaError:
             pass
         check("delete_task removes it", fetched is None or fetched.get("id") != task_id)
+
+        # Recurring task: completing it should roll it forward, not close it.
+        first_due = datetime.now(timezone.utc) + timedelta(hours=1)
+        recurring = await client.create_task(
+            project_id, "e2e: daily review", due_date=first_due, repeat_after=86400
+        )
+        check("create_task sets repeat_after", recurring.get("repeat_after") == 86400)
+        check("is_recurring detects it", vikunja.is_recurring(recurring))
+        rolled = await client.mark_done(recurring["id"])
+        check("recurring task is not closed by done", rolled.get("done") is not True)
+        check(
+            "recurring due_date rolls ~1 day forward",
+            vikunja.is_set(rolled.get("due_date"))
+            and timedelta(hours=23) < vikunja.parse_date(rolled["due_date"]) - first_due < timedelta(hours=25),
+        )
+        await client.delete_task(recurring["id"])
     finally:
         await client.close()
 

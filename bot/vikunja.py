@@ -19,6 +19,23 @@ def is_set(date_str: str | None) -> bool:
     return bool(date_str) and not date_str.startswith("0001-01-01")
 
 
+def is_recurring(task: dict) -> bool:
+    """True if this task carries a recurrence cadence."""
+    return bool(task.get("repeat_after")) or task.get("repeat_mode") in (1,)
+
+
+def describe_recurrence(task: dict) -> str:
+    """Human label for a recurring task's cadence, e.g. 'every day'."""
+    if (task.get("repeat_mode") or 0) == 1:
+        return "every month"
+    seconds = task.get("repeat_after") or 0
+    for unit_seconds, label in ((604800, "week"), (86400, "day"), (3600, "hour"), (60, "minute")):
+        if seconds and seconds % unit_seconds == 0:
+            count = seconds // unit_seconds
+            return f"every {label}" if count == 1 else f"every {count} {label}s"
+    return "on a schedule"
+
+
 def parse_date(date_str: str) -> datetime:
     """Parse a Vikunja RFC3339 date into an aware datetime (UTC)."""
     return datetime.fromisoformat(date_str.replace("Z", "+00:00")).astimezone(timezone.utc)
@@ -76,6 +93,8 @@ class VikunjaClient:
         due_date: datetime | None = None,
         priority: int | None = None,
         description: str = "",
+        repeat_after: int | None = None,
+        repeat_mode: int = 0,
     ) -> dict:
         body: dict = {"title": title}
         if description:
@@ -87,6 +106,11 @@ class VikunjaClient:
             body["reminders"] = [{"reminder": format_date(due_date)}]
         if priority is not None:
             body["priority"] = priority
+        if repeat_after:
+            # Vikunja rolls due_date + reminders forward by repeat_after when a
+            # recurring task is marked done; repeat_mode 1 means monthly.
+            body["repeat_after"] = repeat_after
+            body["repeat_mode"] = repeat_mode
         response = await self._request("PUT", f"/projects/{project_id}/tasks", json=body)
         return response.json()
 

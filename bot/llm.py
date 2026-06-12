@@ -13,35 +13,41 @@ from datetime import datetime
 import httpx
 
 import config
+import parsing
 
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 You extract one or MORE tasks from a chat message. Reply with ONLY a JSON array
 of task objects, no prose:
-[{"title": "...", "due_date": "... or null", "priority": 0, "project": "... or null"}]
+[{"title": "...", "due_date": "... or null", "priority": 0, "project": "... or null", "repeat": "... or null"}]
 
 Rules:
 - Usually a message is ONE task -> return a single-element array.
 - If the message is a LIST — bullet points (•, -, *), "1." numbering, or several
   short lines that are each a distinct action — return ONE object per list item.
-- A shared header applies to EVERY item below it: a date/time, priority, or
-  project stated once (e.g. "tasks for today until 6pm:") attaches to all items.
+- A shared header applies to EVERY item below it: a date/time, priority, project,
+  or recurrence stated once (e.g. "tasks for today until 6pm:") attaches to all.
 - title: the task in the SAME language as the message — NEVER translate — with
-  date/time/urgency words and list markers removed.
+  date/time/urgency/recurrence words and list markers removed.
 - due_date: ISO 8601 with timezone offset, resolved against the current local
   time given below; null if no date is implied. "until 6pm" / "by 6pm" /
   "to-do until 18" / "ora 18" means TODAY at that time. A weekday name means the
   NEXT occurrence of that weekday. A bare hour like "ora 10" or "10am" means that
-  time of day.
+  time of day. For a recurring task, due_date is the FIRST occurrence (e.g.
+  "every day at 8pm" -> today or, if 8pm has passed, the next 8pm).
 - priority: 0 unless urgency is expressed (1 low ... 5 do-now).
 - project: best-matching name from the project list, else null.
+- repeat: how often the task recurs, else null. Use one of: "daily", "weekly",
+  "monthly", "hourly", or "every N days/weeks/hours/minutes". "X per day",
+  "X a day", "each morning", "every day" -> "daily"; "every monday" -> "weekly".
 
 Examples — these assume now = Monday 2026-06-08T09:00+03:00:
-"trimite raportul joi la 18, urgent" -> [{"title": "trimite raportul", "due_date": "2026-06-11T18:00:00+03:00", "priority": 4, "project": null}]
-"buy milk tomorrow 6pm" -> [{"title": "buy milk", "due_date": "2026-06-09T18:00:00+03:00", "priority": 0, "project": "Personal"}]
-"call mom sometime next week" -> [{"title": "call mom", "due_date": "2026-06-15T09:00:00+03:00", "priority": 0, "project": null}]
-"Add these tasks for today, to-do until 6PM:\\n• Update goats metadata\\n• Update AKCB mint page\\n• Update AKCB model" -> [{"title": "Update goats metadata", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}, {"title": "Update AKCB mint page", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}, {"title": "Update AKCB model", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null}]
+"trimite raportul joi la 18, urgent" -> [{"title": "trimite raportul", "due_date": "2026-06-11T18:00:00+03:00", "priority": 4, "project": null, "repeat": null}]
+"buy milk tomorrow 6pm" -> [{"title": "buy milk", "due_date": "2026-06-09T18:00:00+03:00", "priority": 0, "project": "Personal", "repeat": null}]
+"review 100 videos min per day for the dancer dataset" -> [{"title": "review 100 videos min for the dancer dataset", "due_date": null, "priority": 0, "project": null, "repeat": "daily"}]
+"water the plants every 3 days" -> [{"title": "water the plants", "due_date": null, "priority": 0, "project": null, "repeat": "every 3 days"}]
+"Add these tasks for today, to-do until 6PM:\\n• Update goats metadata\\n• Update AKCB mint page" -> [{"title": "Update goats metadata", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null, "repeat": null}, {"title": "Update AKCB mint page", "due_date": "2026-06-08T18:00:00+03:00", "priority": 0, "project": null, "repeat": null}]
 
 Current local time: {now}. Timezone: {tz}.
 Projects: {projects}.
@@ -101,12 +107,15 @@ async def parse_with_llm(text: str, project_names: list[str]) -> list[dict] | No
             if not title:
                 continue
             due = item.get("due_date")
+            repeat_after, repeat_mode = parsing.repeat_to_seconds(item.get("repeat"))
             tasks.append(
                 {
                     "title": title,
                     "due_date": datetime.fromisoformat(due) if due else None,
                     "priority": item.get("priority") or None,
                     "project": item.get("project"),
+                    "repeat_after": repeat_after,
+                    "repeat_mode": repeat_mode,
                 }
             )
         return tasks or None
